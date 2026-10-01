@@ -1,221 +1,469 @@
-# CitizenRadar 🚗⚡
+# λ/Σ — Runtime Notes
 
-[![.NET 8.0](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![OpenCvSharp4](https://img.shields.io/badge/OpenCvSharp-4.9-blue?logo=opencv&logoColor=white)](https://github.com/shimat/opencvsharp)
-[![YOLOv8](https://img.shields.io/badge/YOLO-v8n_ONNX-00FFFF?logo=yolo&logoColor=black)](https://github.com/ultralytics/ultralytics)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-green)](#)
-[![License](https://img.shields.io/badge/License-Academic-lightgrey)](#)
+A compact systems experiment around deterministic state propagation, bounded inference, spatial normalization, and asynchronous transport.
 
-**Monocular vehicle speed estimation, trajectory tracking, and school-zone traffic calming watchdog.**
+The implementation assumes that observable state is an imperfect projection of a latent process. Rather than operating directly on the observation domain, intermediate representations are continuously transformed into a constrained metric space before temporal reconciliation.
 
----
+The interesting part is not the input.
 
-## Overview
-
-Excessive speeding through school zones and residential neighborhoods is a primary hazard in urban safety. Traditional police radar traps are infrequent, and commercial Doppler radar speed signs typically cost upwards of thousands of dollars.
-
-**CitizenRadar** is a camera-based telemetry system designed to estimate vehicle velocities from a standard stationary video stream (e.g., traffic cameras, window-mounted webcams, or phone recordings). By combining deep-learning vehicle detection with planar homography calibration, the system rectifies camera perspective distortion and converts 2D pixel trajectories directly into real-world metric speeds ($km/h$).
-
-> **Note**: This system provides optical speed *estimation* based on planar road approximations. It is designed for traffic monitoring, statistical audits, and safety reporting, rather than certified law-enforcement measurements.
+The interesting part is what survives after the input has been repeatedly normalized.
 
 ---
 
-## Pipeline Architecture
+## Runtime
 
-```mermaid
-flowchart TD
-    A[Input Traffic Video / Camera Stream] --> B[OpenCvSharp VideoCapture]
-    B --> C[YOLOv8n ONNX / OpenCV DNN]
-    C --> D[Vehicle Detections: Car, Bus, Truck, Motorcycle]
-    D --> E[IoU Multi-Object Tracker]
-    E --> F[Persistent Vehicle Tracks & Bottom-Center Ground Anchors]
-    F --> G[Planar Homography Transformation Matrix H]
-    G --> H[Real-World Metric Coordinates X, Y in metres]
-    H --> I[Kinematic Speed Estimator: Δd / Δt]
-    I --> J{Overspeed Threshold Check}
-    J -->|Speed > Limit| K[Violation Alert - Red HUD Bounding Box]
-    J -->|Speed <= Limit| L[Normal Tracking - Green HUD Bounding Box]
-    K --> M[Visualizer & Minimap HUD]
-    L --> M
-    K --> N[Logger: speed_log.csv & Audit Summary]
-    L --> N
-```
+The primary execution substrate is **C# on .NET**.
 
----
+Not because it is fashionable.
 
-## Core Computer Vision Methodology
+Because it is unusually good at being several things at once.
 
-### 1. Planar Homography & Perspective Rectification
+C# can move from high-level application logic into numerical workloads, asynchronous execution, concurrent state management, native interoperability, stream processing and network services without forcing the system into a collection of unrelated runtimes.
 
-In a monocular perspective camera, objects of identical size appear smaller as distance increases. A vehicle moving at $50\text{ km/h}$ near the horizon covers only a few pixels per frame, whereas up close it spans dozens of pixels per frame.
+That matters here.
 
-To eliminate perspective distortion, CitizenRadar uses **Planar Homography** ($\mathbf{H}$). During an interactive calibration phase, the user selects four coplanar ground points on the roadway (e.g., pedestrian crossing stripes or lane markers) of known real-world width ($W$) and depth ($H$):
-
-$$\begin{bmatrix} X_{\text{world}} \\ Y_{\text{world}} \\ 1 \end{bmatrix} \sim \mathbf{H} \begin{bmatrix} u_{\text{pixel}} \\ v_{\text{pixel}} \\ 1 \end{bmatrix}$$
-
-where $\mathbf{H}$ is a $3 \times 3$ projective matrix calculated via OpenCV's `GetPerspectiveTransform`. Applying $\mathbf{H}$ warps image coordinates directly into real-world ground meters.
-
-### 2. Ground-Plane Anchor Point Selection
-
-Standard bounding box centroids $(\text{center}_x, \text{center}_y)$ float in 3D space at vehicle hood or roof height. Because homography assumes ground-plane planarity, projecting the center point causes severe perspective parallax. 
-
-CitizenRadar strictly anchors each vehicle to its **bottom-center point**:
-$$\mathbf{p}_{\text{anchor}} = \left( x + \frac{w}{2}, \; y + h \right)$$
-This represents the tire-road contact plane where the homography transformation holds mathematically true.
-
-### 3. Multi-Object Tracking (MOT)
-
-Detections are associated across frames using an **Intersection-over-Union (IoU)** greedy bipartite matching strategy:
-- Tracks maintain persistent IDs and historical trajectory coordinates $(t, u, v)$.
-- Unmatched tracks enter a coasting state for up to $N$ frames to tolerate brief occlusions before deregistration.
-- Newly appearing vehicles receive fresh monotonic IDs.
-
-### 4. Velocity Calculation & Filtering
-
-Velocity is evaluated over a sliding temporal window of frames ($\Delta N$):
-1. The ground displacement $\Delta d$ in meters between position at frame $t$ and frame $t - \Delta N$ is evaluated:
-   $$\Delta d = \sqrt{(X_t - X_{t-\Delta N})^2 + (Y_t - Y_{t-\Delta N})^2}$$
-2. Given video frame rate $\text{FPS}$, elapsed time $\Delta t = \frac{\Delta N}{\text{FPS}}$.
-3. Instantaneous metric speed:
-   $$v_{\text{instant}} = \left( \frac{\Delta d}{\Delta t} \right) \times 3.6 \quad [\text{km/h}]$$
-4. An Exponential Moving Average (EMA) smoother suppresses camera jitter and bounding-box flicker:
-   $$v_t = \alpha v_{\text{instant}} + (1 - \alpha) v_{t-1}$$
-
----
-
-## Project Structure
+The same language can describe:
 
 ```text
-CitizenRadar/
-├── CitizenRadar.sln               # .NET 8 Visual Studio Solution
-├── .gitignore                     # Git ignore for .NET, weights, and media
-├── README.md                      # Project documentation and specifications
-└── CitizenRadar/
-    ├── CitizenRadar.csproj        # Project configuration & OpenCvSharp4 packages
-    ├── Config.cs                  # Tunable thresholds, speeds, paths, colors
-    ├── Program.cs                 # Main pipeline orchestration entry point
-    │
-    ├── Core/
-    │   ├── Calibrator.cs          # Interactive 4-point homography calibration & JSON I/O
-    │   ├── Detector.cs            # YOLOv8n ONNX inference & NMS via OpenCV DNN
-    │   ├── Tracker.cs             # IoU-based multi-object tracker & track lifecycle
-    │   ├── SpeedEstimator.cs      # Metric coordinate transformation & speed kinematics
-    │   ├── Visualizer.cs          # Annotated video HUD, minimap, and overlay rendering
-    │   └── Logger.cs              # CSV telemetry exporter and summary reporting
-    │
-    ├── Models/
-    │   ├── Detection.cs           # Detection record (bbox, confidence, class, anchor)
-    │   ├── Track.cs               # Track record (history, speed, violation status)
-    │   └── CalibrationData.cs     # Calibration serialization schema
-    │
-    ├── models/                    # Directory for yolov8n.onnx (downloaded separately)
-    ├── data/                      # Directory for calibration.json
-    └── output/                    # Generated speed_log.csv & annotated output videos
+state
+memory
+concurrency
+mathematics
+native boundaries
+transport
+serialization
+rendering
+```
+
+without turning each boundary into another language, another process, another dependency graph, and another place for reality to become interesting.
+
+---
+
+## Why C#
+
+C# is often introduced as an application language.
+
+That description is incomplete.
+
+Modern C# provides a combination of:
+
+```text
+strong static typing
++
+JIT compilation
++
+generics
++
+async/await
++
+parallel execution
++
+Span<T>
++
+low-allocation patterns
++
+native interop
++
+structured resource management
++
+cross-platform .NET
+```
+
+The useful property is not any individual feature.
+
+It is the fact that they coexist.
+
+A numerical operation can live beside a background worker.
+
+A background worker can live beside an HTTP server.
+
+The HTTP server can expose the state generated by the numerical operation.
+
+The native layer can remain behind a controlled boundary.
+
+All of it can execute inside the same runtime.
+
+That is the particular kind of power being exploited here.
+
+---
+
+## The Unreasonable Amount of Things One Runtime Can Do
+
+A typical interpretation of C# is:
+
+```text
+request
+→ business logic
+→ response
+```
+
+That model is convenient.
+
+It is also rather small.
+
+The same runtime can instead be arranged as:
+
+```text
+┌──────────────────────────────────────┐
+│              .NET / C#               │
+│                                      │
+│  numerical processing                │
+│  ├── state estimation                │
+│  ├── spatial transforms              │
+│  └── temporal filtering              │
+│                                      │
+│  native boundaries                   │
+│  ├── image processing                │
+│  └── multimedia transport            │
+│                                      │
+│  concurrent execution                │
+│  ├── background workers              │
+│  └── state synchronization           │
+│                                      │
+│  network layer                       │
+│  ├── HTTP                            │
+│  └── streaming                       │
+│                                      │
+│  application layer                  │
+│  └── presentation state              │
+└──────────────────────────────────────┘
+```
+
+No Python orchestration layer is required.
+
+No separate web server is required.
+
+No second language is required merely because the application crossed a boundary.
+
+The boundaries still exist.
+
+They simply don't need to become separate applications.
+
+---
+
+## The Model
+
+Let:
+
+```text
+O(t) → observation
+S(t) → internal state
+G    → spatial operator
+T    → temporal operator
+R    → rendered state
+```
+
+Then the system behaves approximately as:
+
+```text
+O(t)
+ ↓
+φ(O)
+ ↓
+G(φ(O))
+ ↓
+T(S(t-1), G(φ(O)))
+ ↓
+R(...)
+```
+
+The distinction between observation and state is intentional.
+
+An observation may disappear.
+
+State should not.
+
+---
+
+## Numerical Layer
+
+The spatial transform is represented by a projective operator:
+
+```text
+p' ~ H p
+```
+
+with homogeneous normalization performed only after the transformation has been evaluated.
+
+Degenerate projections are rejected rather than propagated.
+
+The system therefore assumes that:
+
+```text
+small denominator
+        ≠
+small value
+```
+
+and treats numerical instability as a state-validity problem rather than a cosmetic rendering problem.
+
+---
+
+## Temporal Layer
+
+Measurements are not trusted independently.
+
+A bounded historical window is maintained and periodically collapsed into a derived quantity.
+
+Conceptually:
+
+```text
+x₀ x₁ x₂ x₃ ... xₙ
+          ↓
+      Δ(xₙ, xₙ-k)
+          ↓
+       τ-normalize
+          ↓
+       filtered state
+```
+
+The historical representation is intentionally finite.
+
+Unbounded history is usually another word for eventually discovering a memory leak.
+
+---
+
+## Native Boundary
+
+The managed layer does not assume that native multimedia facilities behave consistently across distributions.
+
+External decoding is consequently treated as a transport problem.
+
+The preferred representation at the boundary is:
+
+```text
+compressed stream
+      ↓
+native decoder
+      ↓
+BGR24
+      ↓
+pipe
+      ↓
+managed processing
+```
+
+The native world is allowed to be strange.
+
+It is simply not allowed to leak its strangeness into the rest of the application.
+
+---
+
+## Inference
+
+The neural component is consumed as an interchange representation rather than as a language-specific runtime dependency.
+
+The model is therefore treated as data.
+
+Execution remains inside the primary process.
+
+No auxiliary interpreter is required for the inference stage.
+
+This keeps the runtime graph smaller while preserving the ability to replace the underlying model without rebuilding the surrounding state machinery.
+
+---
+
+## State Association
+
+Independent observations are assigned continuity through an overlap relation.
+
+For two regions:
+
+```text
+A ∩ B
+───────
+A ∪ B
+```
+
+provides the basic association signal.
+
+The result is not identity in the philosophical sense.
+
+It is merely:
+
+```text
+probably the same thing
+```
+
+which, statistically speaking, is often sufficient.
+
+Temporary absence is therefore tolerated.
+
+Permanent absence is eventually deregistered.
+
+---
+
+## Filtering
+
+Raw derived values are intentionally unsuitable for direct presentation.
+
+A first-order recursive filter is sufficient for suppressing high-frequency instability:
+
+```text
+yₜ = αxₜ + (1-α)yₜ₋₁
+```
+
+The parameter α determines how much the present is allowed to disagree with the past.
+
+A system without filtering tends to report every numerical disagreement as an event.
+
+A system with too much filtering tends to report history.
+
+Neither is particularly useful.
+
+---
+
+## Transport
+
+The processing core is hosted inside an HTTP-capable runtime.
+
+The transport layer exposes state without requiring the processing layer to understand the client.
+
+This allows the same internal state to be consumed by:
+
+```text
+desktop
+mobile
+browser
+local network
+```
+
+without introducing another application runtime.
+
+Frames are transported as a multipart stream.
+
+State is exposed independently.
+
+The two channels are intentionally decoupled.
+
+---
+
+## Interface
+
+The interface is deliberately thin.
+
+No heavyweight client framework is required.
+
+The browser receives:
+
+```text
+visual state
++
+derived state
++
+control state
+```
+
+and reconstructs the presentation locally.
+
+This keeps the server concerned with computation rather than aesthetics.
+
+---
+
+## Concurrency
+
+The interesting property of a managed runtime is not that it can execute many operations.
+
+It is that unrelated temporal concerns can coexist without becoming unrelated programs.
+
+Conceptually:
+
+```text
+             ┌── acquisition
+             │
+             ├── inference
+             │
+event loop ──┼── state update
+             │
+             ├── transport
+             │
+             └── presentation
+```
+
+Each branch has a different lifetime.
+
+C#'s asynchronous model allows those lifetimes to remain explicit instead of hiding them behind a pile of blocking calls.
+
+The result is less about "multithreading" and more about **controlling time**.
+
+---
+
+## Memory
+
+Managed memory is not synonymous with ignoring memory.
+
+The useful approach is to decide where allocation matters and where it does not.
+
+Short-lived application state can remain ordinary.
+
+Large buffers and high-frequency paths can be treated differently.
+
+Native resources can have explicit ownership.
+
+Streams can have explicit lifetimes.
+
+Disposal is not optional simply because garbage collection exists.
+
+The runtime manages memory.
+
+The engineer still manages the system.
+
+---
+
+## Failure Philosophy
+
+The system assumes that something will eventually be wrong.
+
+Invalid geometry should fail closed.
+
+Missing observations should not create imaginary state.
+
+Numerical explosions should not become telemetry.
+
+Native resources should have explicit lifetimes.
+
+External processes should be treated as unreliable boundaries.
+
+And if something reports a physically absurd value:
+
+```text
+do not improve the number
+fix the assumption
 ```
 
 ---
 
-## Technology Stack
+## Environment
 
-| Layer | Component | Description |
-|:---|:---|:---|
-| **Platform** | .NET 8 (C# 12) | Modern, cross-platform runtime |
-| **Computer Vision** | OpenCvSharp4 | Native C# bindings for OpenCV (video I/O, geometry, drawing) |
-| **Model Inference** | OpenCV DNN Module | Direct execution of YOLOv8 ONNX without external runtimes |
-| **Object Detection** | YOLOv8n (COCO) | Lightweight real-time detector (Cars, Motorcycles, Buses, Trucks) |
-| **Serialization** | System.Text.Json | Structured JSON persistence for calibration parameters |
-| **Telemetry Export** | System.IO.StreamWriter | High-throughput CSV logging of vehicle speeds |
+The intended environment is a modern 64-bit system with:
+
+```text
+.NET 8+
+FFmpeg
+native runtime support
+OpenCV-compatible bindings
+```
+
+Platform-specific behavior remains isolated from higher-level processing logic wherever practical.
 
 ---
 
-## Getting Started
+## Final Remark
 
-> 📖 **Team Setup Guides**:
-> - 💻 **For Windows Teammates (5 members)**: Follow the **[Windows Setup Guide in SETUP.md](SETUP.md#-windows-setup-guide)** (or double-click `setup-windows.bat`).
-> - 🐧 **For Fedora Linux**: Follow the **[Fedora Linux Setup Guide in SETUP.md](SETUP.md#-fedora-linux-setup-guide)** (or run `./setup-fedora.sh`).
+This is not a framework.
 
-### 1. Prerequisites
+It is not a benchmark.
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or higher
-- Git
+It is not a tutorial.
 
-### 2. Clone the Repository
+It is an experiment in making several inconvenient abstractions agree with each other long enough to produce something observable.
 
-```bash
-git clone https://github.com/Abyyy-s/CitizenRadar.git
-cd CitizenRadar
-```
+C# happens to be the language holding the agreement together.
 
-### 3. Restore Dependencies
+If the equations look unnecessary, they probably are.
 
-```bash
-dotnet restore
-```
+If the system looks simple, it probably isn't.
 
-### 4. Download YOLOv8 ONNX Model
+If everything appears to work:
 
-Download the pre-exported YOLOv8 nano ONNX model directly (no Python needed):
-
-```bash
-# Linux / macOS / Windows PowerShell
-mkdir -p CitizenRadar/models
-curl -L -o CitizenRadar/models/yolov8n.onnx https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx
-```
-
-*(On Windows, you can alternatively just double-click `setup-windows.bat` to download it automatically).*
-
----
-
-## Usage Guide
-
-### Running with a Video Stream
-
-```bash
-dotnet run --project CitizenRadar/CitizenRadar -- <path_to_video.mp4>
-```
-
-Optional arguments:
-```bash
-dotnet run --project CitizenRadar/CitizenRadar -- <video_path> [model_path] [calibration_path]
-```
-
-### Interactive Calibration Workflow
-
-1. If no saved `calibration.json` is provided, CitizenRadar displays the first frame of the video.
-2. Click **4 points** on the planar road surface in clockwise order:
-   - **Point 1**: Top-Left
-   - **Point 2**: Top-Right
-   - **Point 3**: Bottom-Right
-   - **Point 4**: Bottom-Left
-3. The console will prompt you to enter the ground dimensions of this quadrilateral:
-   - Real-world road width ($W$) in meters
-   - Real-world road length ($H$) in meters
-4. CitizenRadar calculates $\mathbf{H}$, validates matrix condition, saves `calibration.json`, and starts tracking.
-
----
-
-## Output Specifications
-
-### 1. CSV Telemetry Export (`output/speed_log.csv`)
-
-| Column | Type | Description |
-|:---|:---|:---|
-| `frame` | Integer | Frame index in the video |
-| `track_id` | Integer | Unique persistent vehicle ID |
-| `class_id` | Integer | COCO class index (2: Car, 3: Motorcycle, 5: Bus, 7: Truck) |
-| `class_name` | String | Vehicle category name |
-| `speed_kmh` | Float | Estimated ground speed in $km/h$ |
-| `is_violation` | Boolean | True if speed exceeds configured speed limit |
-
-### 2. Video HUD & Minimap
-
-- **Bounding Box & Label**: Green for compliant speeds, bright red for overspeed violations.
-- **Anchor Indicator**: Circular marker at the ground-contact point of each vehicle.
-- **Bird's-Eye Minimap**: Top-down metric orthographic viewport showing dynamic real-world vehicle positioning.
-- **Telemetry HUD**: Real-time traffic statistics (total vehicles, active count, violation percentage).
-
----
-
-## License
-
-This project is developed as an academic computer vision project. See LICENSE for details.
+**check the denominator.**

@@ -23,3 +23,7 @@ output/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Generated calibration/debug frames
+data/*_frame.jpg
+data/frame0.jpg

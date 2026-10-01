@@ -1,0 +1,30 @@
+{
+  "SourcePoints": [
+    {},
+    {},
+    {},
+    {}
+  ],
+  "RealWorldWidthMetres": 10,
+  "RealWorldHeightMetres": 50,
+  "DestinationPoints": [
+    {},
+    {},
+    {},
+    {}
+  ],
+  "HomographyMatrix": [
+    0.08169385312188428,
+    0.04867218730252148,
+    -35.02043544528701,
+    0.002991847232490329,
+    0.6462379336485777,
+    -36.1287359611545,
+    2.4897620564000613E-05,
+    0.00919125233991522,
+    1
+  ],
+  "VideoSource": "data/traffic.mp4",
+  "CreatedAt": "2026-10-01T20:22:29.6920060\u002B05:30",
+  "Notes": "Updated from Web Dashboard"
+}
